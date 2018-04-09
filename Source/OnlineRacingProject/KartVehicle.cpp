@@ -1,16 +1,33 @@
 #include "KartVehicle.h"
 #include "Engine/World.h"
 #include "Components/InputComponent.h"
+#include "UnrealNetwork.h"
 
 AKartVehicle::AKartVehicle()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	bReplicates = true;
 }
 
 //////////////////////////////////////////////////////////////////////////////////
 void AKartVehicle::BeginPlay()
 {
 	Super::BeginPlay();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AKartVehicle, m_ReplicatedTransform); //Register variable to replication
+	DOREPLIFETIME(AKartVehicle, m_CurrentVelocity);
+	DOREPLIFETIME(AKartVehicle, m_SteeringThrow);
+	DOREPLIFETIME(AKartVehicle, m_CurrentThrottle);
+	//You need to replicate all the information the replicated transform need to have a smooth update every frame
+	//If not, you will need to wait a net update wich can take a longer time and we wans to keep it less crowded to reduce lag
+	// and strain to the server connection
+	//When replicatedLocation is set on the server, the client's version of the variable will be
+    //Set to the server's
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -42,6 +59,11 @@ void AKartVehicle::UpdateLocation(float DeltaTime)
 	{
 		m_CurrentVelocity = FVector::ZeroVector;
 	}
+
+	if (HasAuthority()) // Only the server replicates
+	{
+		m_ReplicatedTransform = GetTransform();
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +76,11 @@ void AKartVehicle::UpdateRotation(float DeltaTime)
 	m_CurrentVelocity = AppliedRotation.RotateVector(m_CurrentVelocity);
 	AddActorWorldRotation(AppliedRotation);
 
+	if (HasAuthority())
+	{ 
+		m_ReplicatedTransform = GetTransform();
+	}
+	
 	//Old rotation kept for training purposes
 	//float rotationAngle = m_MaxRotationPerSecond * DeltaTime * m_SteeringThrow;
 	//FQuat rotationDelta(GetActorUpVector(), FMath::DegreesToRadians(rotationAngle));
@@ -61,7 +88,12 @@ void AKartVehicle::UpdateRotation(float DeltaTime)
 	//AddActorWorldRotation(rotationDelta);
 }
 
-
+/////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::OnReplicate_ReplicatedTransform()
+{
+	//Will be called only when an update of the replicated value is needed instead of every god damn frame
+	SetActorTransform(m_ReplicatedTransform);
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////
 FVector AKartVehicle::GetAirResistance()
@@ -95,11 +127,43 @@ void AKartVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 void AKartVehicle::MoveForward(float value)
 {
 	m_CurrentThrottle = value;
+	Server_MoveForward(value);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
 void AKartVehicle::MoveRight(float value)
 {
 	m_SteeringThrow = value;
+	Server_MoveRight(value);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::Server_MoveForward_Implementation(float value)
+{
+	m_CurrentThrottle = value;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+bool AKartVehicle::Server_MoveForward_Validate(float value)
+{
+	//Cheat protection: Throttle always has to be between -1 and 1
+	if (value >= -1 && value <= 1)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::Server_MoveRight_Implementation(float value)
+{
+	m_SteeringThrow = value;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+bool AKartVehicle::Server_MoveRight_Validate(float value)
+{
+	return true;
 }
 
