@@ -19,10 +19,7 @@ void AKartVehicle::BeginPlay()
 void AKartVehicle::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(AKartVehicle, m_ReplicatedTransform); //Register variable to replication
-	DOREPLIFETIME(AKartVehicle, m_CurrentVelocity);
-	DOREPLIFETIME(AKartVehicle, m_SteeringThrow);
-	DOREPLIFETIME(AKartVehicle, m_CurrentThrottle);
+	DOREPLIFETIME(AKartVehicle, m_currentServerState);
 	//You need to replicate all the information the replicated transform need to have a smooth update every frame
 	//If not, you will need to wait a net update wich can take a longer time and we wans to keep it less crowded to reduce lag
 	// and strain to the server connection
@@ -34,16 +31,41 @@ void AKartVehicle::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutL
 void AKartVehicle::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	
-	UpdateLocation(DeltaTime);
-	UpdateRotation(DeltaTime);
+
+	if (GetRemoteRole() == ENetRole::ROLE_SimulatedProxy && Role == ROLE_Authority )
+	{
+		FKartVehicleMoveStruct currentClientMove;
+		currentClientMove.m_CurrentDeltaTime = DeltaTime;
+		currentClientMove.m_SteeringThrow = m_CurrentSteeringThrow;
+		currentClientMove.m_Throttle = m_CurrentThrottle;
+		currentClientMove.m_CreationTime = GetWorld()->TimeSeconds;
+		SimulateMove(currentClientMove);
+		Server_SendMove(currentClientMove);
+	}
+
+	if (Role == ROLE_AutonomousProxy)
+	{
+		FKartVehicleMoveStruct currentClientMove;
+		currentClientMove.m_CurrentDeltaTime = DeltaTime;
+		currentClientMove.m_SteeringThrow = m_CurrentSteeringThrow;
+		currentClientMove.m_Throttle = m_CurrentThrottle;
+		currentClientMove.m_CreationTime = GetWorld()->TimeSeconds;
+		SimulateMove(currentClientMove);
+		m_MoveQueueArray.Add(currentClientMove);
+		Server_SendMove(currentClientMove);
+	}
+
+	if (Role == ROLE_SimulatedProxy) //Role on the current computer
+	{
+		SimulateMove(m_currentServerState.m_LastMove);
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-void AKartVehicle::UpdateLocation(float DeltaTime)
+void AKartVehicle::UpdateLocation(float DeltaTime, float throttle)
 {
 	FVector forceDirection = GetActorForwardVector();
-	float forceMagnitude = m_MaxDrivingForce * m_CurrentThrottle;
+	float forceMagnitude = m_MaxDrivingForce * throttle;
 	FVector forceToAdd = forceDirection * forceMagnitude;
 	forceToAdd += GetAirResistance();
 	forceToAdd += GetRollingResistance();
@@ -55,44 +77,41 @@ void AKartVehicle::UpdateLocation(float DeltaTime)
 	FHitResult outCollisionDuringTranslation;
 	AddActorWorldOffset(translationToApply, shouldSweep, &outCollisionDuringTranslation);
 
-	if (outCollisionDuringTranslation.IsValidBlockingHit())
+	if (outCollisionDuringTranslation.IsValidBlockingHit()) //Clear velocity when hitting obstacle
 	{
 		m_CurrentVelocity = FVector::ZeroVector;
-	}
-
-	if (HasAuthority()) // Only the server replicates
-	{
-		m_ReplicatedTransform = GetTransform();
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
-void AKartVehicle::UpdateRotation(float DeltaTime)
+void AKartVehicle::UpdateRotation(float DeltaTime, float steeringThrow)
 {
 	float deltaSpeed = FVector::DotProduct(GetActorForwardVector(), m_CurrentVelocity) * DeltaTime;
 	float testval = m_CurrentVelocity.Size() * DeltaTime; // same as dotproduct when positive
-	float rotationAngle = deltaSpeed / m_MinTurningRadius * m_SteeringThrow;
+	float rotationAngle = deltaSpeed / m_MinTurningRadius * steeringThrow;
 	FQuat AppliedRotation(GetActorUpVector(), rotationAngle);
 	m_CurrentVelocity = AppliedRotation.RotateVector(m_CurrentVelocity);
 	AddActorWorldRotation(AppliedRotation);
 
 	if (HasAuthority())
 	{ 
-		m_ReplicatedTransform = GetTransform();
+		m_currentServerState.m_CurrentTransform = GetTransform();
 	}
-	
-	//Old rotation kept for training purposes
-	//float rotationAngle = m_MaxRotationPerSecond * DeltaTime * m_SteeringThrow;
-	//FQuat rotationDelta(GetActorUpVector(), FMath::DegreesToRadians(rotationAngle));
-	//m_CurrentVelocity = rotationDelta.RotateVector(m_CurrentVelocity);
-	//AddActorWorldRotation(rotationDelta);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
-void AKartVehicle::OnReplicate_ReplicatedTransform()
+void AKartVehicle::OnReplicate_CurrentServerState()
 {
 	//Will be called only when an update of the replicated value is needed instead of every god damn frame
-	SetActorTransform(m_ReplicatedTransform);
+	SetActorTransform(m_currentServerState.m_CurrentTransform);
+	m_CurrentVelocity = m_currentServerState.m_currentVelocity;
+	ClearAcknowledgedMoves(m_currentServerState.m_LastMove);
+
+	for (const FKartVehicleMoveStruct& move : m_MoveQueueArray)
+	{
+		SimulateMove(move);
+	}
+
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -127,43 +146,48 @@ void AKartVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 void AKartVehicle::MoveForward(float value)
 {
 	m_CurrentThrottle = value;
-	Server_MoveForward(value);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
 void AKartVehicle::MoveRight(float value)
 {
-	m_SteeringThrow = value;
-	Server_MoveRight(value);
+	m_CurrentSteeringThrow = value;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-void AKartVehicle::Server_MoveForward_Implementation(float value)
+void AKartVehicle::Server_SendMove_Implementation(FKartVehicleMoveStruct moveToSend) //Called when arrived on server
 {
-	m_CurrentThrottle = value;
+	SimulateMove(moveToSend);
+	
+	m_currentServerState.m_LastMove = moveToSend;
+	m_currentServerState.m_CurrentTransform = GetTransform();
+	m_currentServerState.m_currentVelocity = m_CurrentVelocity;
 }
-
 //////////////////////////////////////////////////////////////////////////////////////////
-bool AKartVehicle::Server_MoveForward_Validate(float value)
-{
-	//Cheat protection: Throttle always has to be between -1 and 1
-	if (value >= -1 && value <= 1)
-	{
-		return true;
-	}
-
-	return false;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////
-void AKartVehicle::Server_MoveRight_Implementation(float value)
-{
-	m_SteeringThrow = value;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////
-bool AKartVehicle::Server_MoveRight_Validate(float value)
+bool AKartVehicle::Server_SendMove_Validate(FKartVehicleMoveStruct moveToSend)
 {
 	return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::SimulateMove(const FKartVehicleMoveStruct& moveToSimulate)
+{
+	UpdateLocation(moveToSimulate.m_CurrentDeltaTime,moveToSimulate.m_Throttle);
+	UpdateRotation(moveToSimulate.m_CurrentDeltaTime,moveToSimulate.m_SteeringThrow);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+void AKartVehicle::ClearAcknowledgedMoves(FKartVehicleMoveStruct lastMove)
+{
+	TArray<FKartVehicleMoveStruct> newMoves;
+
+	for (const FKartVehicleMoveStruct& move : m_MoveQueueArray)
+	{
+		if (move.m_CreationTime > lastMove.m_CreationTime)
+		{
+			newMoves.Add(move);
+		}
+	}
+
+	m_MoveQueueArray = newMoves;
+}

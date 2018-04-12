@@ -4,6 +4,37 @@
 #include "GameFramework/Pawn.h"
 #include "KartVehicle.generated.h"
 
+USTRUCT()
+struct FKartVehicleMoveStruct
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY()
+	float m_Throttle;
+	UPROPERTY()
+	float m_SteeringThrow;
+	UPROPERTY()
+	float m_CurrentDeltaTime;
+	UPROPERTY()
+	float m_CreationTime;
+};
+
+////////////////////////////////////////////////////////////
+USTRUCT()
+struct FKartVehicleStateStruct
+{
+	GENERATED_USTRUCT_BODY()
+	
+	UPROPERTY()
+	FKartVehicleMoveStruct m_LastMove;
+	UPROPERTY()
+	FVector m_currentVelocity;
+	UPROPERTY()
+	FTransform m_CurrentTransform;
+
+};
+//////////////////////////////////////////////////////////////
+
 UCLASS()
 class ONLINERACINGPROJECT_API AKartVehicle : public APawn
 {
@@ -11,14 +42,13 @@ class ONLINERACINGPROJECT_API AKartVehicle : public APawn
 
 //Member variables
 private:
+
 	FVector m_CurrentVelocity;
 
 	UPROPERTY(EditAnywhere)
 	float m_CurrentMass = 1000; //KG
-	UPROPERTY(Replicated)
 	float m_CurrentThrottle;
-	UPROPERTY(Replicated)
-	float m_SteeringThrow;
+	float m_CurrentSteeringThrow;
 	UPROPERTY(EditAnywhere)
 	float m_DragCoefficient = 16;
 	UPROPERTY(EditAnywhere)
@@ -29,8 +59,13 @@ private:
 	float m_MinTurningRadius = 10;
 
 	//Replication
-	UPROPERTY(ReplicatedUsing  = OnReplicate_ReplicatedTransform)
-	FTransform m_ReplicatedTransform;
+	
+	UPROPERTY(ReplicatedUsing = OnReplicate_CurrentServerState)
+	FKartVehicleStateStruct m_currentServerState;
+	UPROPERTY()
+	FKartVehicleMoveStruct m_CurrentMove;
+	TArray<FKartVehicleMoveStruct> m_MoveQueueArray; //Moves waiting to be analaysed by server
+	
 
 //Member methods
 public:
@@ -41,22 +76,22 @@ protected:
 
 public:	
 	virtual void Tick(float DeltaTime) override;
-	void UpdateRotation(float DeltaTime);
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_MoveForward(float value);
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_MoveRight(float value);
+	void Server_SendMove(FKartVehicleMoveStruct moveToSend);
 	void MoveForward(float value);
 	void MoveRight(float value);
 
 	//Callbacks for replication events
 	UFUNCTION()
-	void OnReplicate_ReplicatedTransform();
+	void OnReplicate_CurrentServerState();
 
 private:
-	void UpdateLocation(float DeltaTime);
+	void UpdateLocation(float DeltaTime, float throttle);
+	void UpdateRotation(float DeltaTime, float steeringThrow);
 	FVector GetAirResistance();
 	FVector GetRollingResistance();
+	void SimulateMove(const FKartVehicleMoveStruct& moveToSimulate);
+	void ClearAcknowledgedMoves(FKartVehicleMoveStruct lastMove);
 
 };
