@@ -3,8 +3,6 @@
 #include "Components/InputComponent.h"
 #include "VehicleMovementComponent.h"
 #include "ReplicationComponent.h"
-#include "ReplicationComponent.h"
-
 
 //Getters and Setters
 void AKartVehicle::SetCurrentThrottle(float newThrottle){m_CurrentThrottle = newThrottle;}
@@ -12,7 +10,7 @@ float AKartVehicle::GetCurrentThrottle(){return m_CurrentThrottle;}
 void AKartVehicle::SetCurrentSteeringThrow(float newSteeringThrow) { m_CurrentSteeringThrow = newSteeringThrow;}
 float AKartVehicle::GetCurrentSteeringThrow() {return m_CurrentSteeringThrow;}
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
 AKartVehicle::AKartVehicle()
 {
 	PrimaryActorTick.bCanEverTick = true;
