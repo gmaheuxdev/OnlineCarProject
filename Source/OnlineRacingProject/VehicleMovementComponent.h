@@ -28,15 +28,14 @@ public:
 //Getters and setters
 FVector GetCurrentVelocity();
 void SetCurrentVelocity(FVector newVelocity);
+FKartVehicleMoveStruct GetLastMove();
 
 //Member variables
 private:
 	
 	FVector m_CurrentVelocity;
-
 	UPROPERTY(EditAnywhere)
 	float m_CurrentMass = 1000; //KG
-	
 	UPROPERTY(EditAnywhere)
 	float m_DragCoefficient = 16;
 	UPROPERTY(EditAnywhere)
@@ -45,6 +44,8 @@ private:
 	float m_MaxDrivingForce = 10000; //Force at max throttle(Newtons)
 	UPROPERTY(EditAnywhere)
 	float m_MinTurningRadius = 10;
+	FKartVehicleMoveStruct m_LastMove;
+	class AKartVehicle* m_CachedOwner;
 
 
 //Member methods
@@ -61,8 +62,12 @@ protected:
 
 private:
 
-	FVector GetAirResistance();
-	FVector GetRollingResistance();
+	FVector CalculateAirResistance();
+	FVector CalculateRollingResistance();
 	void UpdateLocation(float DeltaTime, float throttle);
+	FVector CalculateTranslationToApply(FVector forceToAdd, float DeltaTime);
+	FVector CalculateForceToApply(float throttle);
 	void UpdateRotation(float DeltaTime, float steeringThrow);
+	FKartVehicleMoveStruct CreateNewMove(float DeltaTime);
+
 };

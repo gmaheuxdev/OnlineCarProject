@@ -33,14 +33,20 @@ private:
 UVehicleMovementComponent* m_CachedMovementComponent;
 TArray<FKartVehicleMoveStruct> m_MoveQueueArray; //Moves waiting to be analaysed by server
 
+//Cheat protection variables
+float m_SimulatedDeltaTime; //Accumulation of deltatime from moves sent by the client
 
 //Member methods
 public:	
 	
 	UReplicationComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	void UpdateReplication(FKartVehicleMoveStruct lastMove);
+
+
 	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_SendMove(FKartVehicleMoveStruct moveToSend);
+	void Server_SendMove(FKartVehicleMoveStruct moveSentToServer);
 	
 protected:
 	
@@ -54,5 +60,10 @@ private:
 	UFUNCTION()
 	void OnReplicate_CurrentServerState();
 	void ClearAcknowledgedMoves(FKartVehicleMoveStruct lastMove);
+	void UpdateServerState(FKartVehicleMoveStruct& move);
+
+	//Cheat protection
+	bool IsMoveValid(FKartVehicleMoveStruct moveToValidate);
+	bool IsDeltaTimeValid(float timeToCheck);
 
 };
